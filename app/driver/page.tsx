@@ -210,29 +210,26 @@ export default function DriverPage() {
   };
 
   const handleClaimJob = async (jobId: string) => {
-    if (!userId) return;
+  if (!userId) return;
 
-    const { data, error } = await supabase
-      .from('jobs')
-      .update({
-        assigned_driver_user_id: userId,
-        status: 'assigned',
-      })
-      .eq('id', jobId)
-      .is('assigned_driver_user_id', null); // only if still unclaimed
+  const { error } = await supabase
+    .from('jobs')
+    .update({
+      assigned_driver_user_id: userId,
+      status: 'assigned',
+    })
+    .eq('id', jobId)
+    .is('assigned_driver_user_id', null); // only if still unclaimed
 
-    if (error) {
-      console.error(error);
-      alert('Error claiming job');
-      return;
-    }
+  if (error) {
+    console.error('handleClaimJob error:', error);
+    alert(error.message || 'Error claiming job');
+    return;
+  }
 
-    if (!data || data.length === 0) {
-      alert('Too late — another driver already claimed this job.');
-    }
-
-    loadJobs(userId);
-  };
+  // Just reload jobs; if claim failed quietly, job will still look unassigned
+  loadJobs(userId);
+};
 
   const handleStartTrip = async (job: Job) => {
     if (!userId) return;
