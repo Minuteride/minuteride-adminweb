@@ -34,30 +34,79 @@ export default function Page() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // load data + realtime
+  // load data + realtime (and send push notifications on new jobs)
   useEffect(() => {
     if (!session) return;
 
     // initial load
     loadAll();
 
-    // create channel object
+    console.log('🔔 Setting up jobs-rt realtime channel');
+
     const channel = supabase
       .channel('jobs-rt')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'jobs' },
-        () => {
-          // whenever jobs change, reload
-          loadAll();
-        }
-      );
+        async (payload: any) => {
+          console.log('🔔 jobs-rt change payload:', payload);
 
-    // subscribe – ignore the Promise result
-    channel.subscribe();
+          // always reload jobs + drivers so dashboard stays in sync
+          loadAll();
+
+          // only send push notifications for NEW jobs
+          if (payload.eventType === 'INSERT') {
+            const newJob = payload.new;
+            console.log('🔔 New job inserted, preparing to send push notifications:', newJob);
+
+            try {
+              // 1️⃣ get all users that have a push token
+              const { data: users, error } = await supabase
+                .from('users_public')
+                .select('expo_push_token')
+                .not('expo_push_token', 'is', null);
+
+              if (error) {
+                console.log('❌ Error fetching users with expo_push_token:', error.message);
+                return;
+              }
+
+              if (!users || users.length === 0) {
+                console.log('ℹ️ No users with expo_push_token, skipping push');
+                return;
+              }
+
+              // 2️⃣ build a message for each user
+              const messages = users.map((u: { expo_push_token: string }) => ({
+                to: u.expo_push_token,
+                sound: 'default',
+                title: 'New MinuteRide job available',
+                body: `${newJob.pickup || 'Pickup unknown'} → ${newJob.dropoff || 'Dropoff unknown'}`,
+                data: { jobId: newJob.id },
+              }));
+
+              // 3️⃣ send to Expo push API
+              const res = await fetch('https://exp.host/--/api/v2/push/send', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(messages),
+              });
+
+              const data = await res.json();
+              console.log('✅ Push sent, Expo response:', JSON.stringify(data));
+            } catch (err: any) {
+              console.log('❌ Error sending push notifications:', err?.message || err);
+            }
+          }
+        }
+      )
+      .subscribe();
 
     // cleanup: remove channel when component / session changes
     return () => {
+      console.log('🧹 Removing jobs-rt channel');
       supabase.removeChannel(channel);
     };
   }, [session]);
@@ -84,14 +133,39 @@ export default function Page() {
   };
 
   const createJob = async () => {
-    if (!form.pickup || !form.dropoff) return alert('Enter pickup and dropoff');
-    const { error } = await supabase.from('jobs').insert({
-      pickup: form.pickup,
-      dropoff: form.dropoff,
-      notes: form.notes || null,
-      created_by_user_id: session?.user?.id ?? null
+    if (!form.pickup || !form.dropoff) {
+      alert('Enter pickup and dropoff');
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('jobs')
+      .insert({
+        pickup: form.pickup,
+        dropoff: form.dropoff,
+        notes: form.notes || null,
+        created_by_user_id: session?.user?.id ?? null
+      })
+      .select()
+      .single();
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    // 🔔 Fire SMS notifications (does not block the UI)
+    fetch('/api/notify-drivers-new-job', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pickup: data.pickup,
+        dropoff: data.dropoff,
+      }),
+    }).catch((err) => {
+      console.error('Failed to call SMS notify API', err);
     });
-    if (error) alert(error.message);
+
     setForm({ pickup:'', dropoff:'', notes:'' });
   };
 
@@ -217,5 +291,3 @@ export default function Page() {
     </div>
   );
 }
-
-
