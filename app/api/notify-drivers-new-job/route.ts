@@ -5,7 +5,7 @@ import twilio from 'twilio';
 export async function POST(request: Request) {
   try {
     //
-    // 🟦 Read environment variables safely
+    // Read environment variables safely
     //
     const supabaseUrl =
       process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     const twilioFrom = process.env.TWILIO_FROM_NUMBER;
 
     //
-    // 🟥 Validate required env vars
+    // Validate required env vars
     //
     if (!supabaseUrl) {
       console.error('Missing SUPABASE_URL');
@@ -41,13 +41,13 @@ export async function POST(request: Request) {
     }
 
     //
-    // 🟦 Initialize clients
+    // Initialize clients
     //
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const twilioClient = twilio(twilioSid, twilioToken);
 
     //
-    // 🟦 Parse request body
+    // Parse request body
     //
     const body = await request.json();
     const { pickup, dropoff } = body as {
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     };
 
     //
-    // 🟦 Fetch drivers with SMS enabled
+    // Fetch drivers with SMS enabled
     //
     const { data: drivers, error } = await supabase
       .from('drivers')
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
     }
 
     //
-    // 🟦 SMS message content
+    // SMS message content
     //
     const messageText = `🚗 New MinuteRide job:
 Pickup: ${pickup || 'N/A'}
@@ -85,7 +85,7 @@ Dropoff: ${dropoff || 'N/A'}
 Log in now to claim it.`;
 
     //
-    // 🟦 Send SMS to all eligible drivers
+    // Send SMS to all eligible drivers
     //
     const results = await Promise.allSettled(
       drivers
@@ -110,4 +110,3 @@ Log in now to claim it.`;
     );
   }
 }
-  
