@@ -4,23 +4,20 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import twilio from 'twilio';
 
-export const dynamic = 'force-dynamic';
+type DriverRow = {
+  phone_number: string | null;
+  sms_notifications_enabled: boolean | null;
+};
 
 export async function POST(request: Request) {
   try {
-    // Read Supabase vars (two possible names for URL, one for service key)
+    // --- Supabase envs ---
     const supabaseUrl =
-      process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+      process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    // Read Twilio vars
-    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
-    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
-    const twilioFrom = process.env.TWILIO_FROM_NUMBER;
-
-    // ---- Supabase env check ----
     if (!supabaseUrl || !supabaseServiceKey) {
-      console.error('Supabase config missing', {
+      console.error('Supabase misconfigured', {
         hasUrl: !!supabaseUrl,
         hasServiceKey: !!supabaseServiceKey,
       });
@@ -34,9 +31,13 @@ export async function POST(request: Request) {
       );
     }
 
-    // ---- Twilio env check ----
+    // --- Twilio envs ---
+    const twilioSid = process.env.TWILIO_ACCOUNT_SID;
+    const twilioToken = process.env.TWILIO_AUTH_TOKEN;
+    const twilioFrom = process.env.TWILIO_FROM_NUMBER;
+
     if (!twilioSid || !twilioToken || !twilioFrom) {
-      console.error('Twilio config missing', {
+      console.error('Twilio misconfigured', {
         hasSid: !!twilioSid,
         hasToken: !!twilioToken,
         hasFrom: !!twilioFrom,
@@ -52,42 +53,49 @@ export async function POST(request: Request) {
       );
     }
 
-    // Create clients
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const twilioClient = twilio(twilioSid, twilioToken);
 
-    // Read body safely
-    let pickup = '';
-    let dropoff = '';
+    // Body is not super important for SMS – just for text
+    let pickup: string | undefined;
+    let dropoff: string | undefined;
+
     try {
       const body = (await request.json()) as {
         pickup?: string;
         dropoff?: string;
       };
-      pickup = body.pickup || '';
-      dropoff = body.dropoff || '';
+      pickup = body.pickup;
+      dropoff = body.dropoff;
     } catch {
-      // if body parse fails, just leave them empty
+      // If parsing fails, just leave them undefined
+      pickup = undefined;
+      dropoff = undefined;
     }
 
-    // Get drivers who enabled SMS notifications
+    // --- Fetch drivers who want SMS ---
     const { data: drivers, error: driversError } = await supabase
-      .from('drivers')
-      .select('phone_number')
+      .from<DriverRow>('drivers')
+      .select('phone_number, sms_notifications_enabled')
       .eq('sms_notifications_enabled', true);
 
     if (driversError) {
-      console.error('Error fetching drivers from Supabase', driversError);
+      console.error('Supabase drivers query error', driversError);
       return NextResponse.json(
-        { error: 'Failed to fetch drivers' },
+        {
+          error: 'Failed to fetch drivers',
+          supabaseMessage: driversError.message,
+          supabaseCode: driversError.code,
+          supabaseDetails: driversError.details ?? null,
+        },
         { status: 500 }
       );
     }
 
     if (!drivers || drivers.length === 0) {
-      console.log('No drivers with SMS enabled');
+      console.log('No drivers with sms_notifications_enabled = true');
       return NextResponse.json(
-        { message: 'No drivers with SMS enabled' },
+        { ok: true, message: 'No drivers with SMS enabled' },
         { status: 200 }
       );
     }
@@ -99,24 +107,26 @@ Log in now to claim it.`;
 
     const results = await Promise.allSettled(
       drivers
-        .map((d: any) => d.phone_number as string | null)
-        .filter((phone): phone is string => !!phone)
-        .map((phone) =>
+        .filter((d) => !!d.phone_number)
+        .map((d) =>
           twilioClient.messages.create({
             body: messageText,
-            from: twilioFrom!,
-            to: phone,
+            from: twilioFrom,
+            to: d.phone_number!,
           })
         )
     );
 
-    console.log('SMS send results:', results);
+    console.log('Twilio SMS results:', JSON.stringify(results, null, 2));
 
     return NextResponse.json({ ok: true }, { status: 200 });
-  } catch (err) {
-    console.error('Error in notify-drivers-new-job route', err);
+  } catch (err: any) {
+    console.error('Fatal error in notify-drivers-new-job route', err);
     return NextResponse.json(
-      { error: 'Internal error sending SMS' },
+      {
+        error: 'Internal error in notify-drivers-new-job',
+        message: err?.message ?? String(err),
+      },
       { status: 500 }
     );
   }
