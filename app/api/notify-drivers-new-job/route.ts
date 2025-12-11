@@ -75,9 +75,11 @@ export async function POST(request: Request) {
 
     // --- Fetch drivers who want SMS ---
     const { data: drivers, error: driversError } = await supabase
-      .from<DriverRow>('drivers')
+      .from('drivers') // no generic here – we cast below
       .select('phone_number, sms_notifications_enabled')
       .eq('sms_notifications_enabled', true);
+
+    const typedDrivers = (drivers ?? []) as DriverRow[];
 
     if (driversError) {
       console.error('Supabase drivers query error', driversError);
@@ -92,7 +94,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!drivers || drivers.length === 0) {
+    if (!typedDrivers || typedDrivers.length === 0) {
       console.log('No drivers with sms_notifications_enabled = true');
       return NextResponse.json(
         { ok: true, message: 'No drivers with SMS enabled' },
@@ -106,7 +108,7 @@ Dropoff: ${dropoff || 'N/A'}
 Log in now to claim it.`;
 
     const results = await Promise.allSettled(
-      drivers
+      typedDrivers
         .filter((d) => !!d.phone_number)
         .map((d) =>
           twilioClient.messages.create({
